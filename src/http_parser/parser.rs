@@ -65,12 +65,12 @@ fn parse_headers(state: &mut HttpParserState) -> Option<ParsingResult> {
     }
     let mut headers: HashMap<String, String> = HashMap::new();
 
-    let mut chunk = &state.chunk[state.pos..];
+    let chunk = &state.chunk[state.pos..];
     // let chunk = &state.chunk[state.pos..];
 
     let mut start = state.pos;
     let mut middle: Option<usize> = None;
-    if let Some(middleV) = state.chunk[start..].iter().position(|c| *c == (':' as u8)) {
+    if let Some(middleV) = chunk.iter().position(|c| *c == (':' as u8)) {
         middle = Some(start + middleV);
     }
     let mut end = start + chunk.iter().position(|c| *c == ('\r' as u8))?;
@@ -90,32 +90,13 @@ fn parse_headers(state: &mut HttpParserState) -> Option<ParsingResult> {
         }
 
         start = end + 2;
-        // let rest = std::str::from_utf8(&state.chunk[start..(start+100)]).unwrap();
-        // let rest2 = std::str::from_utf8(&state.chunk[state.pos..(state.pos+100)]).unwrap();
         end = start + state.chunk[start..].iter().position(|c| *c == ('\r' as u8))?;
 
         if let Some(middleV) = state.chunk[start..].iter().position(|c| *c == (':' as u8)) {
             middle = Some(start + middleV);
         }
-        // let rest3 = std::str::from_utf8(&state.chunk[start..end]).unwrap();
-        // let rest4 = std::str::from_utf8(&state.chunk[start..(middle.unwrap_or(start))]).unwrap();
-
-        let x = 2;
     }
 
-    // state.request.method = Method::from_str(std::str::from_utf8(&state.chunk[start..end]).unwrap()).unwrap();
-    // start = end + 1;
-
-    // let mut lines = chunk.lines();
-    // while let Some(line) = lines.next() {
-    //     state.pos += line.len() + 2;
-    //     if line == "" {
-    //         break
-    //     }
-    //     if let Some((key, value)) = line.split_once(":") {
-    //         headers.insert(key.parse().unwrap(), value.chars().skip(1).collect::<String>());
-    //     }
-    // }
     state.request.headers = headers;
     state.stage = Stage::Body;
     state.pos = start;
@@ -186,10 +167,8 @@ fn extract_chunked_body(req: &mut HttpParserState, str: String) {
 
 fn extract_fixed_size_body(state: &mut HttpParserState, content_length: &String) -> Option<ParsingResult> {
     let content_length: usize = content_length.parse().unwrap();
-    let rest = &state.chunk[state.pos..].iter();
-    let rest2 = std::str::from_utf8(&state.chunk[state.pos..]);
 
-    let len = rest.len();
+    let len = &state.chunk[state.pos..].iter().len();
     if  len < content_length {
         return Some(ParsingResult::Partial)
     }
