@@ -35,5 +35,6 @@ pub struct HttpRequest {
     pub method: Method,
     pub path: String,
     pub headers: HashMap<String, String>,
-    pub body: String,
+    pub body_bytes: Vec<u8>,
+    pub body_str: String,
 }

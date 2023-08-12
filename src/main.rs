@@ -13,17 +13,16 @@ fn handle_client(mut stream: TcpStream) {
     // let mut buffer: Vec<u8> = Vec::with_capacity(65535);
 
     // let buffer: Vec<u8> = Vec::new();
-    let len = stream.read(buffer).unwrap();
+    let len = stream.read(buffer.as_mut_slice()).unwrap();
     // let ascii_string = String::from_utf8_lossy(&buffer[..len]).to_string();
-    let ascii_string = String::from_utf8(buffer[..len].to_vec()).unwrap();
+    // let ascii_string = String::from_utf8(buffer[..len].to_vec()).unwrap();
 
 
-    let str_len = ascii_string.len();
+    // let str_len = ascii_string.len();
 
     let state = &mut HttpParserState {
-        chunk: ascii_string,
+        chunk: buffer[..len].to_vec(),
         total_bytes_read: len,
-        total_chars_read: str_len,
         pos: 0,
         stage: Stage::RequestLine,
         request: HttpRequest {
@@ -31,7 +30,8 @@ fn handle_client(mut stream: TcpStream) {
             method: Method::GET,
             path: "".to_string(),
             headers: Default::default(),
-            body: Default::default(),
+            body_bytes: Default::default(),
+            body_str: Default::default(),
         },
     };
 
@@ -44,14 +44,15 @@ fn handle_client(mut stream: TcpStream) {
         }
         // let buffer = &mut [0u8; 1024];
         let buffer = &mut [0u8; 2048];
-        let len = stream.read(buffer).unwrap();
+        // let mut buffer: Vec<u8> = Vec::with_capacity(65535);
+
+        let len = stream.read(buffer.as_mut_slice()).unwrap();
         // let ascii_string = String::from_utf8_lossy(&buffer[..len]).to_string();
-        let ascii_string = String::from_utf8(buffer[..len].to_vec()).unwrap();
+        // let ascii_string = String::from_utf8(buffer[..len].to_vec()).unwrap();
 
 
-        state.chunk.push_str(&ascii_string);
+        state.chunk.extend(&buffer[..len].to_vec());
 
-        state.total_chars_read += ascii_string.len();
         state.total_bytes_read += len;
     }
 
@@ -80,7 +81,7 @@ fn main() {
                     let start = Instant::now();
                     handle_client(stream);
                     let elapsed = start.elapsed();
-                    // println!("Elapsed: {:?}", elapsed);
+                    println!("Elapsed: {:?}", elapsed);
                 });
             }
             Err(e) => {

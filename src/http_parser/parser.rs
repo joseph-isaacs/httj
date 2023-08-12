@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Bytes;
 use std::os::macos::raw::stat;
 use std::str::{FromStr, Lines};
 use std::sync::atomic::Ordering::AcqRel;
@@ -13,9 +14,8 @@ pub enum Stage {
 }
 
 pub struct HttpParserState {
-    pub chunk: String,
+    pub chunk: Vec<u8>,
     pub total_bytes_read: usize,
-    pub total_chars_read: usize,
     pub pos: usize,
     pub stage: Stage,
     pub request: HttpRequest
@@ -35,7 +35,7 @@ pub fn parse_http_1_1_request(state: &mut HttpParserState) -> Option<ParsingResu
     parse_request_line(state)?;
 
     // create a headers hashmap
-    parse_headers(state);
+    parse_headers(state)?;
 
 
     if let Some(content_length) = state.request.headers.get("Content-Length") {
@@ -51,58 +51,103 @@ pub fn parse_http_1_1_request(state: &mut HttpParserState) -> Option<ParsingResu
         }
     }
 
+    state.request.body_str = std::str::from_utf8(&state.request.body_bytes).unwrap().to_string();
+
+    // println!("request: {:?}", state.request);
+
     return Some(ParsingResult::Complete)
 
 }
 
-fn parse_headers(state: &mut HttpParserState) {
+fn parse_headers(state: &mut HttpParserState) -> Option<ParsingResult> {
     if state.stage != Stage::Headers {
-        return;
+        return Some(ParsingResult::Complete);
     }
-    let mut chunk = state.chunk.as_str();
-
-    chunk = &chunk[state.pos..];
     let mut headers: HashMap<String, String> = HashMap::new();
-    let mut lines = chunk.lines();
-    while let Some(line) = lines.next() {
-        state.pos += line.len() + 2;
-        if line == "" {
+
+    let mut chunk = &state.chunk[state.pos..];
+    // let chunk = &state.chunk[state.pos..];
+
+    let mut start = state.pos;
+    let mut middle: Option<usize> = None;
+    if let Some(middleV) = state.chunk[start..].iter().position(|c| *c == (':' as u8)) {
+        middle = Some(start + middleV);
+    }
+    let mut end = start + chunk.iter().position(|c| *c == ('\r' as u8))?;
+
+    loop {
+        if start == end {
+            start += 2; // skip \r\n
             break
         }
-        if let Some((key, value)) = line.split_once(":") {
-            headers.insert(key.parse().unwrap(), value.chars().skip(1).collect::<String>());
+
+        if let Some(middle) = middle {
+            let middle_pos = middle;
+            let end_pos = end;
+            let key = std::str::from_utf8(&state.chunk[start..middle_pos]).unwrap();
+            let value = std::str::from_utf8(&state.chunk[middle_pos+2..end_pos]).unwrap();
+            headers.insert(key.to_string(), value.to_string());
         }
+
+        start = end + 2;
+        // let rest = std::str::from_utf8(&state.chunk[start..(start+100)]).unwrap();
+        // let rest2 = std::str::from_utf8(&state.chunk[state.pos..(state.pos+100)]).unwrap();
+        end = start + state.chunk[start..].iter().position(|c| *c == ('\r' as u8))?;
+
+        if let Some(middleV) = state.chunk[start..].iter().position(|c| *c == (':' as u8)) {
+            middle = Some(start + middleV);
+        }
+        // let rest3 = std::str::from_utf8(&state.chunk[start..end]).unwrap();
+        // let rest4 = std::str::from_utf8(&state.chunk[start..(middle.unwrap_or(start))]).unwrap();
+
+        let x = 2;
     }
+
+    // state.request.method = Method::from_str(std::str::from_utf8(&state.chunk[start..end]).unwrap()).unwrap();
+    // start = end + 1;
+
+    // let mut lines = chunk.lines();
+    // while let Some(line) = lines.next() {
+    //     state.pos += line.len() + 2;
+    //     if line == "" {
+    //         break
+    //     }
+    //     if let Some((key, value)) = line.split_once(":") {
+    //         headers.insert(key.parse().unwrap(), value.chars().skip(1).collect::<String>());
+    //     }
+    // }
     state.request.headers = headers;
     state.stage = Stage::Body;
+    state.pos = start;
+
+    return Some(ParsingResult::Complete)
 }
 
 fn parse_request_line(state: &mut HttpParserState) -> Option<ParsingResult> {
     if state.stage != RequestLine {
         return Some(ParsingResult::Complete);
     }
-    let mut chunk = state.chunk.as_str();
+    let mut chunk = state.chunk.iter();
 
     let mut start = 0;
-    let mut end = chunk.find(" ")?;
-    state.request.method = Method::from_str(&chunk[..end]).unwrap();
+    let mut end = chunk.position(|c| *c == (' ' as u8))?;
+
+    state.request.method = Method::from_str(std::str::from_utf8(&state.chunk[start..end]).unwrap()).unwrap();
     start = end + 1;
 
-    end += chunk[start..].find(" ")? + 1;
-    state.request.path = (&chunk[start..end]).to_string();
+    end += state.chunk[start..].iter().position(|c| *c == ' ' as u8)? + 1;
+    state.request.path = (std::str::from_utf8(&state.chunk[start..end]).unwrap()).to_string();
     start = end + 1;
 
-    end += chunk[start..].find("\r\n")? + 1;
-    state.request.version = Version::from_str(&chunk[start..end]).unwrap();
-    start = end + 2;
+    end += state.chunk[start..].iter().position(|c| *c == '\r' as u8)? + 1;
+    let s = std::str::from_utf8(&state.chunk[start..end]);
+    state.request.version = Version::from_str(s.unwrap()).unwrap();
+    start = end + 1;
 
     state.stage = Stage::Headers;
     state.pos = end + 2;
 
-    // let rest = &state.chunk[state.pos..];
-
     return Some(ParsingResult::Complete)
-
 }
 
 fn extract_chunked_body(req: &mut HttpParserState, str: String) {
@@ -141,13 +186,18 @@ fn extract_chunked_body(req: &mut HttpParserState, str: String) {
 
 fn extract_fixed_size_body(state: &mut HttpParserState, content_length: &String) -> Option<ParsingResult> {
     let content_length: usize = content_length.parse().unwrap();
-    let rest = &state.chunk.as_str()[state.pos..];
+    let rest = &state.chunk[state.pos..].iter();
+    let rest2 = std::str::from_utf8(&state.chunk[state.pos..]);
+
     let len = rest.len();
-    let lenb = rest.bytes().len();
     if  len < content_length {
         return Some(ParsingResult::Partial)
     }
-    state.request.body = state.chunk.chars().take(content_length).collect::<String>();
+    if  len > content_length {
+        println!("this cannot happen {}", len);
+        return None
+    }
+    state.request.body_bytes = state.chunk[state.pos..(state.pos+len)].to_vec();
     return Some(ParsingResult::Complete)
 }
 
