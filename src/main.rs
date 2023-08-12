@@ -1,21 +1,61 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::Instant;
+use crate::http_parser::http_request::{HttpRequest, Method, Version};
+use crate::http_parser::parser::{HttpParserState, Stage};
 
 pub mod http_parser;
 
 fn handle_client(mut stream: TcpStream) {
     // Handle the client connection
-    let mut buffer = [0; 2*1024];
-    stream.read(&mut buffer).unwrap();
+    // let buffer = &mut [0u8; 1024];
+    let buffer = &mut [0u8; 2048];
+    // let mut buffer: Vec<u8> = Vec::with_capacity(65535);
 
-    println!("Received data: {:?}", &buffer);
+    // let buffer: Vec<u8> = Vec::new();
+    let len = stream.read(buffer).unwrap();
+    // let ascii_string = String::from_utf8_lossy(&buffer[..len]).to_string();
+    let ascii_string = String::from_utf8(buffer[..len].to_vec()).unwrap();
 
-    let ascii_string = String::from_utf8_lossy(&buffer).to_string();
 
-    println!("Received data as string: {:?}", &ascii_string);
+    let str_len = ascii_string.len();
+
+    let state = &mut HttpParserState {
+        chunk: ascii_string,
+        total_bytes_read: len,
+        total_chars_read: str_len,
+        pos: 0,
+        stage: Stage::RequestLine,
+        request: HttpRequest {
+            version: Version::HTTP1_0,
+            method: Method::GET,
+            path: "".to_string(),
+            headers: Default::default(),
+            body: Default::default(),
+        },
+    };
+
+
+
+    loop {
+        let res = http_parser::parser::parse_http_1_1_request(state).unwrap();
+        if res == http_parser::parser::ParsingResult::Complete {
+            break;
+        }
+        // let buffer = &mut [0u8; 1024];
+        let buffer = &mut [0u8; 2048];
+        let len = stream.read(buffer).unwrap();
+        // let ascii_string = String::from_utf8_lossy(&buffer[..len]).to_string();
+        let ascii_string = String::from_utf8(buffer[..len].to_vec()).unwrap();
+
+
+        state.chunk.push_str(&ascii_string);
+
+        state.total_chars_read += ascii_string.len();
+        state.total_bytes_read += len;
+    }
 
     // use parse_http_1_1_request in crate http_parser
-    http_parser::parser::parse_http_1_1_request(ascii_string);
 
     let response = r#"
 HTTP/1.1 200 OK
@@ -37,7 +77,10 @@ fn main() {
         match stream {
             Ok(stream) => {
                 std::thread::spawn(move || {
+                    let start = Instant::now();
                     handle_client(stream);
+                    let elapsed = start.elapsed();
+                    // println!("Elapsed: {:?}", elapsed);
                 });
             }
             Err(e) => {
