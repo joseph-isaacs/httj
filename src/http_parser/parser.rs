@@ -169,10 +169,10 @@ fn extract_fixed_size_body(state: &mut HttpParserState, content_length: &String)
     let content_length: usize = content_length.parse().unwrap();
 
     let len = &state.chunk[state.pos..].iter().len();
-    if  len < content_length {
+    if  *len < content_length {
         return Some(ParsingResult::Partial)
     }
-    if  len > content_length {
+    if  *len > content_length {
         println!("this cannot happen {}", len);
         return None
     }
